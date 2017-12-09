@@ -6,6 +6,7 @@ var RenderDebugger = require('./../../stores/mixins.js').RenderDebugger;
 var MegaRenderMixin = require('./../../stores/mixins.js').MegaRenderMixin;
 var ButtonsUI = require('./../../ui/buttons.jsx');
 var ModalDialogsUI = require('./../../ui/modalDialogs.jsx');
+var CloudBrowserModalDialog = require('./../../ui/cloudBrowserModalDialog.jsx');
 var DropdownsUI = require('./../../ui/dropdowns.jsx');
 var ContactsUI = require('./../ui/contacts.jsx');
 var ConversationsUI = require('./../ui/conversations.jsx');
@@ -498,10 +499,33 @@ var ConversationAudioVideoPanel = React.createClass({
             RTC.attachMediaStream(self.refs.localViewport, room.megaChat.rtc.gLocalStream);
             // attachMediaStream would do the .play call
         }
+
+        $(room).rebind('toggleMessages.av', function() {
+            self.toggleMessages();
+        });
+
+        room.messagesBlockEnabled = self.state.messagesBlockEnabled;
+    },
+    componentWillUnmount: function() {
+        var self = this;
+        var room = self.props.chatRoom;
+
+        var $container = $(ReactDOM.findDOMNode(self));
+        if ($container) {
+            $container.unbind('mouseover.chatUI' + self.props.chatRoom.roomId);
+            $container.unbind('mouseout.chatUI' + self.props.chatRoom.roomId);
+            $container.unbind('mousemove.chatUI' + self.props.chatRoom.roomId);
+        }
+
+        $(document).unbind("fullscreenchange.megaChat_" + room.roomId);
+        $(window).unbind('resize.chatUI_' + room.roomId);
+        $(room).unbind('toggleMessages.av');
     },
     toggleMessages: function(e) {
-        e.preventDefault();
-        e.stopPropagation();
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
 
 
         if (this.props.onMessagesToggle) {
@@ -513,7 +537,6 @@ var ConversationAudioVideoPanel = React.createClass({
         this.setState({
             'messagesBlockEnabled': !this.state.messagesBlockEnabled
         });
-
     },
     fullScreenModeToggle: function(e) {
         e.preventDefault();
@@ -738,7 +761,7 @@ var ConversationPanel = React.createClass({
     },
 
     uploadFromComputer: function() {
-        $('#fileselect1').trigger('click')
+        this.props.chatRoom.uploadFromComputer();
     },
     refreshUI: function() {
         var self = this;
@@ -766,7 +789,7 @@ var ConversationPanel = React.createClass({
     handleKeyDown: SoonFc(function(e) {
         var self = this;
         var chatRoom = self.props.chatRoom;
-        if (self.isMounted() && chatRoom.isActive()) {
+        if (self.isMounted() && chatRoom.isActive() && !chatRoom.isReadOnly()) {
             chatRoom.trigger("onChatIsFocused");
         }
     }, 150),
@@ -1114,27 +1137,31 @@ var ConversationPanel = React.createClass({
         ];
 
         if (
-            (self.isRetrievingHistoryViaScrollPull && !self.loadingShown) ||
-            self.props.chatRoom.messagesBuff.messagesHistoryIsLoading() === true ||
-            self.props.chatRoom.messagesBuff.joined === false ||
             (
-                self.props.chatRoom.messagesBuff.joined === true &&
-                self.props.chatRoom.messagesBuff.haveMessages === true &&
-                self.props.chatRoom.messagesBuff.messagesHistoryIsLoading() === true
+                ChatdIntegration._loadingChats[room.roomId] &&
+                ChatdIntegration._loadingChats[room.roomId].state() === 'pending'
+            ) ||
+            (self.isRetrievingHistoryViaScrollPull && !self.loadingShown) ||
+            room.messagesBuff.messagesHistoryIsLoading() === true ||
+            room.messagesBuff.joined === false ||
+            (
+                room.messagesBuff.joined === true &&
+                room.messagesBuff.haveMessages === true &&
+                room.messagesBuff.messagesHistoryIsLoading() === true
             ) ||
             (
-                self.props.chatRoom.messagesBuff.isDecrypting &&
-                self.props.chatRoom.messagesBuff.isDecrypting.state() === 'pending'
+                room.messagesBuff.isDecrypting &&
+                room.messagesBuff.isDecrypting.state() === 'pending'
             )
         ) {
             self.loadingShown = true;
         }
         else if (
-            self.props.chatRoom.messagesBuff.joined === true
+            room.messagesBuff.joined === true
         ) {
             if (!self.isRetrievingHistoryViaScrollPull) {
                 var headerText = (
-                    self.props.chatRoom.messagesBuff.messages.length === 0 ?
+                    room.messagesBuff.messages.length === 0 ?
                         __(l[8002]) :
                         __(l[8002])
                 );
@@ -1181,7 +1208,7 @@ var ConversationPanel = React.createClass({
         var lastMessageState = null;
         var grouped = false;
 
-        self.props.chatRoom.messagesBuff.messages.forEach(function(v, k) {
+        room.messagesBuff.messages.forEach(function(v, k) {
             if (!v.protocol && v.revoked !== true) {
                 var shouldRender = true;
                 if (
@@ -1319,15 +1346,18 @@ var ConversationPanel = React.createClass({
                             onUpdate={() => {
                                 self.onResizeDoUpdate();
                             }}
+                            editing={self.state.editing === v.messageId || self.state.editing === v.pendingMessageId}
                             onEditStarted={($domElement) => {
                                 self.editDomElement = $domElement;
-                                self.setState({'editing': v});
+                                self.setState({'editing': v.messageId});
                                 self.forceUpdate();
                             }}
                             onEditDone={(messageContents) => {
                                 self.editDomElement = null;
 
                                 var currentContents = v.textContents;
+
+                                v.edited = false;
 
                                 if (messageContents === false || messageContents === currentContents) {
                                     self.messagesListScrollable.scrollToBottom(true);
@@ -1384,6 +1414,7 @@ var ConversationPanel = React.createClass({
                             }}
                             onDeleteClicked={(e, msg) => {
                                 self.setState({
+                                    'editing': false,
                                     'confirmDeleteDialog': true,
                                     'messageToBeDeleted': msg
                                 });
@@ -1398,7 +1429,7 @@ var ConversationPanel = React.createClass({
         var attachCloudDialog = null;
         if (self.state.attachCloudDialog === true) {
             var selected = [];
-            attachCloudDialog = <ModalDialogsUI.CloudBrowserDialog
+            attachCloudDialog = <CloudBrowserModalDialog.CloudBrowserDialog
                 folderSelectNotAllowed={true}
                 onClose={() => {
                     self.setState({'attachCloudDialog': false});
@@ -1857,6 +1888,7 @@ var ConversationPanel = React.createClass({
                                    chatRoom={self.props.chatRoom}
                                    messagesBuff={self.props.chatRoom.messagesBuff}
                                    editDomElement={self.state.editDomElement}
+                                   editingMessageId={self.state.editing}
                                    confirmDeleteDialog={self.state.confirmDeleteDialog}
                                 >
                                 <div className="messages main-pad">
@@ -1885,7 +1917,7 @@ var ConversationPanel = React.createClass({
                                 persist={true}
                                 onUpEditPressed={() => {
                                     var foundMessage = false;
-                                    room.messagesBuff.messages.keys().reverse().forEach(function(k) {
+                                    room.messagesBuff.messages.keys().reverse().some(function(k) {
                                         if(!foundMessage) {
                                             var message = room.messagesBuff.messages[k];
 
@@ -1893,13 +1925,13 @@ var ConversationPanel = React.createClass({
                                             if (message.userId) {
                                                 if (!M.u[message.userId]) {
                                                     // data is still loading!
-                                                    return false;
+                                                    return;
                                                 }
                                                 contact = M.u[message.userId];
                                             }
                                             else {
                                                 // contact not found
-                                                return false;
+                                                return;
                                             }
 
                                             if (
@@ -1912,6 +1944,7 @@ var ConversationPanel = React.createClass({
                                                     (!message.isManagement || !message.isManagement())
                                                 ) {
                                                     foundMessage = message;
+                                                    return foundMessage;
                                             }
                                         }
                                     });
@@ -1920,7 +1953,7 @@ var ConversationPanel = React.createClass({
                                         return false;
                                     }
                                     else {
-                                        $('.message.body.' + foundMessage.messageId).trigger('onEditRequest');
+                                        self.setState({'editing': foundMessage.messageId});
                                         self.lastScrolledToBottom = false;
                                         return true;
                                     }
@@ -1981,7 +2014,13 @@ var ConversationPanels = React.createClass({
 
         var conversations = [];
 
-        if (getSitePath() === "/fm/chat") {
+        var hadLoaded = (
+            ChatdIntegration.allChatsHadLoaded.state() !== 'pending' &&
+            ChatdIntegration.mcfHasFinishedPromise.state() !== 'pending' &&
+            Object.keys(ChatdIntegration._loadingChats).length === 0
+        );
+
+        if (hadLoaded && getSitePath() === "/fm/chat") {
             // do we need to "activate" an conversation?
             var activeFound = false;
             self.props.conversations.forEach(function (chatRoom) {
@@ -1990,12 +2029,11 @@ var ConversationPanels = React.createClass({
                 }
             });
             if (self.props.conversations.length > 0 && !activeFound) {
-                self.props.conversations[self.props.conversations.keys()[0]].setActive();
-                self.props.conversations[self.props.conversations.keys()[0]].show();
+                self.props.megaChat.showLastActive();
             }
         }
 
-        self.props.conversations.forEach(function(chatRoom) {
+        hadLoaded && self.props.conversations.forEach(function(chatRoom) {
             var otherParticipants = chatRoom.getParticipantsExceptMe();
 
             var contact;
@@ -2019,8 +2057,6 @@ var ConversationPanels = React.createClass({
             var contactsList = [];
             var contactsListOffline = [];
 
-            var hadLoaded = ChatdIntegration.allChatsHadLoaded.state() !== 'pending' &&
-                ChatdIntegration.mcfHasFinishedPromise.state() !== 'pending';
 
             if (hadLoaded) {
                 self.props.contacts.forEach(function (contact) {

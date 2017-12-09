@@ -392,9 +392,13 @@ mBroadcaster.once('startMega', function populate_l() {
     l[9030] = l[9030].replace('[S]', '<strong>').replace('[/S]', '</strong>');
     l[9036] = l[9036].replace('[S]', '<strong>').replace('[/S]', '</strong>');
 
-    l[10631] = l[10631].replace('[A]', '<a href="/general" class="clickurl" target="_blank">').replace('[/A]', '</a>');
-    l[10630] = l[10630].replace('[A]', '<a href="/general" class="clickurl" target="_blank">').replace('[/A]', '</a>');
-    l[10634] = l[10634].replace('[A]', '<a href="/support" class="clickurl" target="_blank">').replace('[/A]', '</a>');
+    l[10631] = l[10631].replace('[A]', '<a href="https://mega.nz/general" target="_blank" rel="noopener noreferrer">')
+                       .replace('[/A]', '</a>');
+    l[10630] = l[10630].replace('[A]', '<a href="https://mega.nz/general" target="_blank" rel="noopener noreferrer">')
+                       .replace('[/A]', '</a>');
+    l[10634] = l[10634].replace('[A]', '<a href="https://mega.nz/support" target="_blank" rel="noopener noreferrer">')
+                       .replace('[/A]', '</a>');
+
     l[10635] = l[10635].replace('[B]', '"<b>').replace('[/B]', '</b>"');
     l[10636] = l[10636].replace('[A]', '<a href="mailto:support@mega.nz">').replace('[/A]', '</a>').replace('%1', 2);
     l[10644] = l[10644].replace('[A]', '<a href="mailto:support@mega.nz">').replace('[/A]', '</a>');
@@ -483,6 +487,10 @@ mBroadcaster.once('startMega', function populate_l() {
         .replace('[A]', '<a href="https://www.microsoft.com/store/apps/9nbs1gzzk3zg" target="_blank">')
         .replace('[/A]', '</a>');
 
+    var linktohelp = 'https://mega.nz/help/client/webclient/cloud-drive/59f13b42f1b7093a7f8b4589';
+    l[17097] =  l[17097]
+                .replace('[A]', '<a id="versionhelp" href="' + linktohelp + '" target="_blank" class="red">')
+                .replace('[/A]', '</a>');
     var common = [
         15536, 16106, 16107, 16116, 16119, 16120, 16123, 16124, 16135, 16136, 16137, 16138, 16304, 16313, 16315,
         16316, 16341, 16358, 16359, 16360, 16361, 16375, 16382, 16383, 16384, 16394

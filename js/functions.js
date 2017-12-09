@@ -260,7 +260,15 @@ function secondsToTimeShort(secs) {
  */
 function numOfBytes(bytes, precision) {
 
-    var parts = bytesToSize(bytes, precision || 2).split(' ');
+    'use strict';
+
+    // If not defined, default to 2dp (this still allows setting precision to 0 for 0dp)
+    if (typeof precision === 'undefined') {
+        precision = 2;
+    }
+
+    var parts = bytesToSize(bytes, precision).split(' ');
+
     return { size: parts[0], unit: parts[1] || 'B' };
 }
 
@@ -751,6 +759,9 @@ function srvlog2(type /*, ...*/) {
             if (is_chrome_firefox) {
                 version = window.mozMEGAExtensionVersion || buildVersion.firefox;
             }
+            else if (is_firefox_web_ext) {
+                version = buildVersion.firefox;
+            }
             else if (window.chrome) {
                 version = buildVersion.chrome;
             }
@@ -884,13 +895,15 @@ function MurmurHash3(key, seed) {
  * @return {MegaPromise}
  */
 function mKeyDialog(ph, fl, keyr) {
-    var promise = new MegaPromise();
+    "use strict";
 
+    var promise = new MegaPromise();
     if (keyr) {
         $('.fm-dialog.dlkey-dialog .instruction-message')
             .text(l[9048]);
     }
     else {
+        $('.fm-dialog.dlkey-dialog input').val('');
         $('.fm-dialog.dlkey-dialog .instruction-message')
             .safeHTML(l[7945] + '<br/>' + l[7972]);
     }
@@ -900,50 +913,67 @@ function mKeyDialog(ph, fl, keyr) {
     $('.new-download-file-icon').addClass(fileIcon({
         name: 'unknown.unknown'
     }));
+
+    var $newFolderBtn = $('.fm-dialog.dlkey-dialog .fm-dialog-new-folder-button');
+    $newFolderBtn.addClass('disabled').removeClass('active');
     $('.fm-dialog.dlkey-dialog').removeClass('hidden');
     fm_showoverlay();
 
-    $('.fm-dialog.dlkey-dialog input').rebind('keydown', function(e) {
-        $('.fm-dialog.dlkey-dialog .fm-dialog-new-folder-button').addClass('active');
-        if (e.keyCode === 13) {
-            $('.fm-dialog.dlkey-dialog .fm-dialog-new-folder-button').click();
-        }
-    });
+    $('.fm-dialog.dlkey-dialog input').off('input keypress').on('input keypress', function(e) {
+        var length = $('.fm-dialog.dlkey-dialog input').val().length;
 
-    $('.fm-dialog.dlkey-dialog .fm-dialog-new-folder-button').rebind('click', function(e) {
-
-        // Trim the input from the user for whitespace, newlines etc on either end
-        var key = $.trim($('.fm-dialog.dlkey-dialog input').val());
-
-        if (key) {
-            // Remove the ! from the key which is exported from the export dialog
-            key = key.replace('!', '');
-
-            var newHash = (fl ? '/F!' : '/!') + ph + '!' + key;
-
-            if (getSitePath() !== newHash) {
-                promise.resolve(key);
-
-                fm_hideoverlay();
-                $('.fm-dialog.dlkey-dialog').addClass('hidden');
-                loadSubPage(newHash);
+        if (length) {
+            $newFolderBtn.removeClass('disabled').addClass('active');
+            if (e.keyCode === 13) {
+                $newFolderBtn.click();
             }
         }
         else {
-            promise.reject();
+            $newFolderBtn.removeClass('active').addClass('disabled');
         }
     });
-    $('.fm-dialog.dlkey-dialog .fm-dialog-close').rebind('click', function(e) {
-        $('.fm-dialog.dlkey-dialog').addClass('hidden');
-        fm_hideoverlay();
-        promise.reject();
+
+    $newFolderBtn.rebind('click', function() {
+
+        if ($(this).hasClass('active')) {
+
+            // Trim the input from the user for whitespace, newlines etc on either end
+            var key = $.trim($('.fm-dialog.dlkey-dialog input').val());
+
+            if (key) {
+
+                // Remove the ! from the key which is exported from the export dialog
+                key = key.replace('!', '');
+
+                var newHash = (fl ? '/#F!' : '/#!') + ph + '!' + key;
+
+                if (getSitePath() !== newHash) {
+                    promise.resolve(key);
+
+                    fm_hideoverlay();
+                    $('.fm-dialog.dlkey-dialog').addClass('hidden');
+                    loadSubPage(newHash);
+                }
+            }
+            else {
+                promise.reject();
+            }
+        }
     });
+
+    // Close button is removed in eff07477006e49667edad81a1deae7d79a03a3f1
+    // $('.fm-dialog.dlkey-dialog .fm-dialog-close').rebind('click', function() {
+    //     $('.fm-dialog.dlkey-dialog').addClass('hidden');
+    //     fm_hideoverlay();
+    //     promise.reject();
+    // });
 
     return promise;
 }
 
 function mRandomToken(pfx) {
-    return (pfx || '!') + '$' + (Math.random() * Date.now()).toString(36);
+    // return (pfx || '!') + '$' + (Math.random() * Date.now()).toString(36);
+    return (pfx || '') + '!' + (Date.now() - 15e11).toString(36) + rand(0x10000).toString(36);
 }
 
 function str_mtrunc(str, len) {
@@ -1535,8 +1565,22 @@ function assertStateChange(currentState, newState, allowedStatesMap, enumMap) {
  * Perform a normal logout
  *
  * @param {Function} aCallback optional
+ * @param {Bool} force optional
  */
-function mLogout(aCallback) {
+function mLogout(aCallback, force) {
+    "use strict";
+
+    if (!force && mega.ui.passwordReminderDialog) {
+        var passwordReminderLogout = mega.ui.passwordReminderDialog.recheckLogoutDialog();
+
+        passwordReminderLogout
+            .done(function() {
+                mLogout(aCallback, true);
+            });
+
+        return;
+    }
+
     var cnt = 0;
     if (M.c[M.RootID] && u_type === 0) {
         for (var i in M.c[M.RootID]) {
@@ -1909,7 +1953,7 @@ function passwordManager(form) {
             if (hashLogic || isPublicLink(path)) {
                 path = path.replace('/', '/#');
 
-                if (location.href.substr(0, 19) === 'chrome-extension://') {
+                if (is_chrome_web_ext || is_firefox_web_ext) {
                     path = path.replace('/#', '/mega/secure.html#');
                 }
             }
@@ -2148,8 +2192,57 @@ if (typeof sjcl !== 'undefined') {
         return result;
     };
 
+    /**
+     * addContactToFolderShare
+     *
+     * Add verified email addresses to folder shares.
+     */
+    Share.prototype.addContactToFolderShare = function addContactToFolderShare() {
+
+        var promise = MegaPromise.resolve();
+        var targets = [];
+        var $shareDialog = $('.share-dialog');
+        var $newContacts;
+        var permissionLevel;
+        var iconPermLvl;
+        var permissionClass;
+        var selectedNode;
+
+        // Share button enabled
+        if ($.dialog === 'share' && !$shareDialog.find('.dialog-share-button').is('.disabled')) {
+
+            selectedNode = $.selected[0];
+            $newContacts = $shareDialog.find('.token-input-list-mega .token-input-token-mega');
+
+            // Is there a new contacts planned for addition to share
+            if ($newContacts.length) {
+
+                // Determin current group permission level
+                iconPermLvl = $shareDialog.find('.permissions-icon')[0];
+                permissionClass = checkMultiInputPermission($(iconPermLvl));
+                permissionLevel = sharedPermissionLevel(permissionClass[0]);
+
+                // Add new planned contact to list
+                $.each($newContacts, function(ind, val) {
+                    targets.push({u: $(val).contents().eq(1).text(), r: permissionLevel});
+                });
+            }
+
+            closeDialog();
+            $('.export-links-warning').addClass('hidden');
+
+            // Add new contacts to folder share
+            if (targets.length > 0) {
+                promise = doShare(selectedNode, targets, true);
+            }
+        }
+
+        return promise;
+    };
+
     Share.prototype.updateNodeShares = function() {
 
+        var self = this;
         var promise = new MegaPromise();
 
         loadingDialog.show();
@@ -2160,7 +2253,7 @@ if (typeof sjcl !== 'undefined') {
                 if (Object($.changedPermissions).length > 0) {
                     promises.push(doShare($.selected[0], $.changedPermissions, true));
                 }
-                promises.push(addContactToFolderShare());
+                promises.push(self.addContactToFolderShare());
 
                 MegaPromise.allDone(promises)
                     .always(function() {
@@ -2448,3 +2541,152 @@ Hash.prototype = Object.create(null, {
         }
     }
 });
+
+
+// this is to change pdf.viewer.js on the fly, as we cant change the original file
+function modifyPdfViewerScript(pdfViewerSrcCode) {
+    'use strict';
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('defaultFilename = \'compressed.tracemonkey - pldi - 09.pdf\';',
+        'defaultFilename = \'document.pdf\';');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('PDFJS.imageResourcesPath = \'./images/\';',
+        'PDFJS.imageResourcesPath = \'/images/pdfV/\';');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('PDFJS.workerSrc = \'../build/pdf.worker.js\';',
+        'PDFJS.workerSrc = \'/pdf.worker.js\';');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('setTitleUsingUrl: function pdfViewSetTitleUsingUrl(url) {',
+        'setTitleUsingUrl: function pdfViewSetTitleUsingUrl(url) { return;');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('var filename = getPDFFileNameFromURL(this.url);',
+        'var filename = this.documentInfo.Title + \'.pdf\';');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('validateFileURL(file);',
+        ' ');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('mozL10n.setLanguage(PDFJS.locale);',
+        ' ');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('document.getElementsByTagName(\'html\')[0].dir = mozL10n.getDirection();',
+        ' ');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('\'fileName\': getPDFFileNameFromURL(this.url),',
+        '\'fileName\': data.info.Title,');
+
+    pdfViewerSrcCode = pdfViewerSrcCode
+        .replace('debuggerScriptPath: \'./debugger.js\',',
+        ' ');
+
+    // algorithm to remove 'mozL10n.get'
+    var st = 5000; // start from char 50000
+
+    var getMsgFromLine = function (startPos, endPos, file) { // this method cuts the last parameter
+        var firstParam = true;
+        var secondParam = false;
+        var finalParam = false;
+        var msg = '';
+        var lastLoc = -1;
+        for (var k = startPos; k < endPos; k++) {
+            if (!finalParam) {
+                if (file.charAt(k) === ',') {
+                    if (firstParam) {
+                        firstParam = false;
+                        secondParam = true;
+                    }
+                    else if (secondParam) {
+                        secondParam = false;
+                        finalParam = true;
+                    }
+                }
+                else if (secondParam && file.charAt(k) === '{') {
+                    while (file.charAt(k) !== '}') {
+                        k++;
+                    }
+                }
+            }
+            else {
+                var counter = 0;
+                for (var h = k; h < endPos; h++) {
+                    if (file.charAt(h) === ')') {
+                        if (counter === 0) {
+                            lastLoc = h + 1;
+                            break;
+                        }
+                        else {
+                            counter--;
+                        }
+                    }
+                    else if (file.charAt(h) === '(') {
+                        counter++;
+                    }
+                    msg += file.charAt(h);
+                }
+                break;
+            }
+        }
+        return {
+            message: msg, endLocation: lastLoc
+        };
+    };
+
+    var loc = -1;
+    loc = pdfViewerSrcCode.indexOf('mozL10n.get(', st);
+    while (loc !== -1) {
+        var endPos = pdfViewerSrcCode.indexOf(';', loc);
+        var currRes = getMsgFromLine(loc, endPos, pdfViewerSrcCode);
+        pdfViewerSrcCode = pdfViewerSrcCode.substring(0, loc)
+            + currRes.message
+            + pdfViewerSrcCode.substring(currRes.endLocation, pdfViewerSrcCode.length);
+        loc = pdfViewerSrcCode.indexOf('mozL10n.get', loc + 1);
+    }
+    // end algorithm to remove 'mozL10n.get'
+
+    var finalFunctionOnViewLoad = 'function webViewerLoad() { '
+        + 'var config = getViewerConfiguration(); '
+        + 'var pdfRef = JSON.parse(localStorage.getItem(\'currPdfPrev2\')); '
+        + 'localStorage.removeItem(\'currPdfPrev2\'); '
+        + 'config.defaultUrl = pdfRef; '
+        + 'config.toolbar.openFile.setAttribute(\'hidden\', \'true\'); '
+        + 'config.secondaryToolbar.openFileButton.setAttribute(\'hidden\', \'true\'); '
+        + 'window.PDFViewerApplication = pdfjsWebApp.PDFViewerApplication; '
+        + 'pdfjsWebApp.PDFViewerApplication.run(config);} '
+        + 'document.addEventListener(\'DOMContentLoaded\', webViewerLoad, true); '
+        + '}) ]);';
+
+    var placeToCut = pdfViewerSrcCode.indexOf('function webViewerLoad() {');
+    pdfViewerSrcCode = pdfViewerSrcCode.substring(0, placeToCut);
+
+    pdfViewerSrcCode += finalFunctionOnViewLoad;
+
+    return pdfViewerSrcCode;
+}
+
+function invalidLinkError() {
+    'use strict';
+    loadingDialog.hide();
+    loadingInitDialog.hide();
+
+    loadfm.loaded = false;
+    loadfm.loading = false;
+    if (!is_mobile) {
+        var title = l[8531];
+        var message = l[17557];
+        msgDialog('warninga', title, message, false, function () {
+            // If the user is logged-in, he'll be redirected to the cloud
+            loadSubPage('login');
+        });
+    }
+    else {
+        // Show file/folder not found overlay
+        mobile.notFoundOverlay.show();
+    }
+}

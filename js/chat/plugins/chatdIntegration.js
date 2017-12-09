@@ -64,9 +64,43 @@ var ChatdIntegration = function(megaChat) {
             ChatdIntegration.mcfHasFinishedPromise.done(function () {
                 var allPromises = [];
                 Object.keys(ChatdIntegration._queuedChats).forEach(function (id) {
+                    var ap = ChatdIntegration._queuedChats[id];
+
+                    var promise = self.openChatFromApi(ap, true);
+
+                    var chatId = false;
+
+                    if (ap.g === 0) {
+                        // extract the chatId, if the type of the chat is private (e.g. == other user's id)
+                        (ap.n || ap.u).forEach(function(member) {
+                            if (!chatId && member.u !== u_handle) {
+                                chatId = member.u;
+                            }
+                        });
+                    }
+                    else {
+                        chatId = ap.id;
+                    }
+
+                    if (chatId && !ChatdIntegration._loadingChats[chatId]) {
+                        ChatdIntegration._loadingChats[chatId] = {
+                            'loadingPromise': promise,
+                            'ap': ap
+                        };
+
+                        ChatdIntegration._loadingChats[chatId].loadingPromise.always(function() {
+                            // since any .done may want to see if the chat was "just loaded"
+                            // I'm delaying the cleanup of the _loadingChats cache
+                            Soon(function() {
+                                delete ChatdIntegration._loadingChats[chatId];
+                            });
+                        });
+                    }
+
                     allPromises.push(
-                        self.openChatFromApi(ChatdIntegration._queuedChats[id], true)
+                        promise
                     );
+
                 });
                 ChatdIntegration._queuedChats = {};
                 ChatdIntegration.allChatsHadLoaded.linkDoneAndFailTo(MegaPromise.allDone(allPromises));
@@ -144,6 +178,8 @@ ChatdIntegration.mcfHasFinishedPromise = new MegaPromise();
  */
 ChatdIntegration.allChatsHadLoaded = new MegaPromise();
 ChatdIntegration._queuedChats = {};
+
+ChatdIntegration._loadingChats = {};
 
 ChatdIntegration.prototype.retrieveChatsFromApi = function() {
     var self = this;
@@ -845,10 +881,8 @@ ChatdIntegration.prototype._parseMessage = function(chatRoom, message) {
                 }
 
                 // generate preview/icon
-                var icon = fileIcon(v);
-
                 if (!attachmentMetaInfo.revoked && !message.revoked) {
-                    if (v.fa && (icon === "graphic" || icon === "image")) {
+                    if (v.fa && is_image(v)) {
                         var imagesListKey = message.messageId + "_" + v.h;
                         if (!chatRoom.images.exists(imagesListKey)) {
                             v.id = imagesListKey;
@@ -1417,11 +1451,13 @@ ChatdIntegration.prototype._attachToChatRoom = function(chatRoom) {
                 MegaPromise.allDone(promises).done(
                     function() {
                         if (pendingkeys.length > 0) {
-                            ChatdIntegration._ensureKeysAreDecrypted(pendingkeys, chatRoom.protocolHandler).done(
-                                function () {
-                                    _runDecryption();
-                                }
-                            );
+                            ChatdIntegration._waitForProtocolHandler(chatRoom, function() {
+                                ChatdIntegration._ensureKeysAreDecrypted(pendingkeys, chatRoom.protocolHandler).done(
+                                    function () {
+                                        _runDecryption();
+                                    }
+                                );
+                            });
                         }
                         else {
                             _runDecryption();
@@ -1467,6 +1503,7 @@ ChatdIntegration.prototype._attachToChatRoom = function(chatRoom) {
     }
 
 
+    $(chatRoom).trigger('onChatdIntegrationReady');
 
 };
 
@@ -1538,7 +1575,8 @@ ChatdIntegration.prototype.markMessageAsSeen = function(chatRoom, msgid) {
 ChatdIntegration.prototype.markMessageAsReceived = function(chatRoom, msgid) {
     var self = this;
     if (!chatRoom.stateIsLeftOrLeaving()) {
-        self.chatd.cmd(Chatd.Opcode.RECEIVED, base64urldecode(chatRoom.chatId), base64urldecode(msgid));
+        // Temporarily disabled, until we get into the state in which we need this again in the UI:
+        // self.chatd.cmd(Chatd.Opcode.RECEIVED, base64urldecode(chatRoom.chatId), base64urldecode(msgid));
     }
 };
 

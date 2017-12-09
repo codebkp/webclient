@@ -10,6 +10,7 @@ function MegaUtils() {
 function MegaApi() {
     this.logger = new MegaLogger('MegaApi');
 }
+
 MegaApi.prototype = new FileManager();
 MegaApi.prototype.constructor = MegaApi;
 
@@ -34,6 +35,8 @@ MegaApi.prototype.prod = function(aSave) {
 };
 
 MegaApi.prototype.req = function(params) {
+    'use strict';
+
     var promise = new MegaPromise();
 
     if (typeof params === 'string') {
@@ -41,14 +44,14 @@ MegaApi.prototype.req = function(params) {
     }
 
     api_req(params, {
-        callback: function(res) {
+        callback: tryCatch(function(res) {
             if (typeof res === 'number' && res < 0) {
                 promise.reject.apply(promise, arguments);
             }
             else {
                 promise.resolve.apply(promise, arguments);
             }
-        }
+        }, promise.reject.bind(promise, EFAILED))
     });
 
     return promise;
@@ -182,6 +185,7 @@ MegaUtils.prototype.xhr = function megaUtilsXHR(aURLOrOptions, aData) {
     var url;
     var method;
     var options;
+    var json = false;
     var promise = new MegaPromise();
 
     if (typeof aURLOrOptions === 'object') {
@@ -204,12 +208,18 @@ MegaUtils.prototype.xhr = function megaUtilsXHR(aURLOrOptions, aData) {
     }
 
     xhr.onloadend = function(ev) {
+        var error = false;
+
         if (this.status === 200) {
-            promise.resolve(ev, this.response);
+            try {
+                return promise.resolve(ev, json ? JSON.parse(this.response) : this.response);
+            }
+            catch (ex) {
+                error = ex;
+            }
         }
-        else {
-            promise.reject(ev);
-        }
+
+        promise.reject(ev, error);
     };
 
     try {
@@ -221,8 +231,14 @@ MegaUtils.prototype.xhr = function megaUtilsXHR(aURLOrOptions, aData) {
         if (options.type) {
             xhr.responseType = options.type;
             if (xhr.responseType !== options.type) {
-                xhr.abort();
-                throw new Error('Unsupported responseType');
+                if (options.type === 'json') {
+                    xhr.responseType = 'text';
+                    json = true;
+                }
+                else {
+                    xhr.abort();
+                    throw new Error('Unsupported responseType');
+                }
             }
         }
 
@@ -314,6 +330,8 @@ MegaUtils.prototype.resetUploadDownload = function megaUtilsResetUploadDownload(
         if (page !== 'download') {
             mega.ui.tpp.reset('dl');
         }
+
+        $.totalDL = false;
     }
     else {
         if (page !== 'download') {
@@ -338,9 +356,14 @@ MegaUtils.prototype.resetUploadDownload = function megaUtilsResetUploadDownload(
             clearInterval($.mTransferAnalysis);
             delete $.mTransferAnalysis;
         }
-        $('.transfer-panel-title').text('');
+        $('.transfer-panel-title span').text('');
         dlmanager.dlRetryInterval = 3000;
         percent_megatitle();
+
+        if (dlmanager.onDownloadFatalError) {
+            dlmanager.showMEGASyncOverlay(true, dlmanager.onDownloadFatalError);
+            delete dlmanager.onDownloadFatalError;
+        }
     }
 
     if (d) {
@@ -548,6 +571,7 @@ MegaUtils.prototype.clearFileSystemStorage = function megaUtilsClearFileSystemSt
         if (d) {
             console.log('Cleaning FileSystem storage...', storagetype);
         }
+
         function onInitFs(fs) {
             var dirReader = fs.root.createReader();
             (function _readEntries(e) {
@@ -784,7 +808,12 @@ MegaUtils.prototype.logout = function megaUtilsLogout() {
         var finishLogout = function() {
             if (--step === 0) {
                 u_logout(true);
-                location.reload();
+                if (localStorage.d === '1' && localStorage.jj === '1') {
+                    location.replace('http://' + location.host); // dev mode, http will be redirected to https @server
+                }
+                else {
+                    location.replace('https://' + location.host);
+                }
             }
         }, step = 1;
 
@@ -848,12 +877,12 @@ MegaUtils.prototype.gfsfetch = function gfsfetch(aData, aStartOffset, aEndOffset
 
     var fetcher = function(data) {
 
-        if (aEndOffset === -1) {
-            aEndOffset = data.s;
-        }
-
         aEndOffset = parseInt(aEndOffset);
         aStartOffset = parseInt(aStartOffset);
+
+        if (aEndOffset === -1 || aEndOffset > data.s) {
+            aEndOffset = data.s;
+        }
 
         if ((!aStartOffset && aStartOffset !== 0)
             || aStartOffset > data.s || !aEndOffset
@@ -959,6 +988,12 @@ MegaUtils.prototype.gfsfetch = function gfsfetch(aData, aStartOffset, aEndOffset
                 if (typeof res === 'object' && res.g) {
                     res.key = key;
                     res.handle = handle;
+                    if (res.efq) {
+                        dlmanager.efq = true;
+                    }
+                    else {
+                        delete dlmanager.efq;
+                    }
                     fetcher(res);
                 }
                 else {
@@ -1236,6 +1271,33 @@ MegaUtils.prototype.getSafeName = function(name) {
         name = '!' + name;
     }
     return name;
+};
+/**
+ * checking if name (file|folder)is satisfaying all OSs [Win + linux + Mac + Android + iOs] rules,
+ * so syncing to local disks won't cause any issue...
+ * we cant yet control cases in which :
+ *     I sync a file named [x] from OS [A],
+ *     to another device running another OS [B]
+ *     And the name [x] breaks OS [B] rules.
+ *
+ * this method will be called to control, renamings from webclient UI.
+ * @param {String} name The filename
+ * @returns {Boolean}
+ */
+MegaUtils.prototype.isSafeName = function (name) {
+    'use strict';
+    // below are mainly denied in windows or android.
+    // we can enhance this as much as we can as
+    // denied chars set D = W + L + M + A + I
+    // where W: denied chars on Winfows, L: on linux, M: on MAC, A: on Android, I: on iOS
+    // minimized to NTFS only
+    if (name.trim().length <= 0) {
+        return false;
+    }
+    if (name.search(/[\\\/<>:*\"\|?]/) >= 0 || name.length > 250) {
+        return false;
+    }
+    return true;
 };
 
 /**
